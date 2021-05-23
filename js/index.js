@@ -1,100 +1,217 @@
 import * as THREE from './three/build/three.module.js';
+import { PointerLockControls } from './three/examples/jsm/controls/PointerLockControls.js';
 
-let camera, scene, renderer, floor, player;
-var keyboard = {};
+
+let camera, scene, renderer, floor, controls;
 var playerObject = {
     height       : 2,
     speed        : 1.5,
     turnSpeed    : Math.PI*0.02,
+    jumpHeight   : 250
 };
 
-const init = function() {
+const objects = [];
+
+let raycaster;
+
+let moveForward = false;
+let moveBackward = false;
+let moveLeft = false;
+let moveRight = false;
+let canJump = false;
+
+let prevTime = performance.now();
+const velocity = new THREE.Vector3();
+const direction = new THREE.Vector3();
+
+function init() {
+
     let geometry, material;
 
+    // camera setup
+    camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 1, 1000 );
+    camera.position.y = 10;
+
+    // scene setup
     scene = new THREE.Scene();
-    camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );renderer = new THREE.WebGLRenderer({antialias : true});
+    scene.background = new THREE.Color( 0x87ceeb );
+
+    // add floor with texture
+    var groundTexture = new THREE.TextureLoader().load('../textures/floor.png');
+    groundTexture.wrapS = groundTexture.wrapT = THREE.RepeatWrapping;
+    groundTexture.repeat.set( 100, 100 );
+    groundTexture.anisotropy = 16;
+    groundTexture.encoding = THREE.sRGBEncoding;
+    var groundMaterial = new THREE.MeshStandardMaterial( { map: groundTexture } );
+    var mesh = new THREE.Mesh( new THREE.BoxBufferGeometry( 2000, 0, 2000 ), groundMaterial );
+    mesh.receiveShadow = true;
+    scene.add( mesh );
+
+
+
+    // add a light
+    const light = new THREE.HemisphereLight( 0xffffff, 0xfdfbd3, 1 );
+    light.position.set( 0.5, 1, 0.75 );
+    scene.add( light );
+
+    // red dot for aim
+    geometry = new THREE.SphereGeometry(0.15, 16, 16);
+    material = new THREE.MeshBasicMaterial( { color: 0xff0000 } );
+    let aimDot = new THREE.Mesh( geometry, material );
+    aimDot.position.set(0, playerObject.height, -10);
+
+    
+    // setup pointer lock controls
+    controls = new PointerLockControls( camera, document.body );
+    document.body.addEventListener( 'click', function () {
+        //lock mouse on screen, use esc to unlock
+        controls.lock();
+    }, false );
+
+    // attach aim dot to controls object
+    controls.getObject().add(aimDot)
+    scene.add( controls.getObject() );
+
+
+    raycaster = new THREE.Raycaster( new THREE.Vector3(), new THREE.Vector3( 0, - 1, 0 ), 0, 10 );
+
+    // render setup
+    renderer = new THREE.WebGLRenderer( { antialias: true } );
+    renderer.setPixelRatio( window.devicePixelRatio );
     renderer.setSize( window.innerWidth, window.innerHeight );
     document.body.appendChild( renderer.domElement );
 
-    // floor
-    geometry = new THREE.BoxGeometry( 50, 0, 50 );
-    material = new THREE.MeshBasicMaterial( {color: 0xffff00, side: THREE.DoubleSide} );
-    floor = new THREE.Mesh( geometry, material );
-    scene.add( floor );
 
-    // player model
-    geometry = new THREE.BoxGeometry(2, 2, 2);
-    material = new THREE.MeshBasicMaterial( { color: 0xff0000 } );
-    player = new THREE.Mesh( geometry, material );
-
-    player.position.set(0, playerObject.height, -10);
-    player.add(camera);
-    scene.add( player );
-
-    camera.position.set(0, playerObject.height, -5);
-	camera.lookAt(new THREE.Vector3(0, playerObject.height, 0));
-
-
+    // listeners
+    window.addEventListener( 'resize', onWindowResize );
+    document.addEventListener( 'keydown', onKeyDown );
+    document.addEventListener( 'keyup', onKeyUp );
 }
 
-const animate = function () {
+function animate() {
     requestAnimationFrame( animate );
 
-    // Keyboard movement inputs
-	if(keyboard[87]){ // W key
-		let xDisplacement = Math.sin(camera.rotation.y) * playerObject.speed;
-		let zDisplacement = -Math.cos(camera.rotation.y) * playerObject.speed;
+    const time = performance.now();
 
-        // camera.position.x -= xDisplacement
-		// camera.position.z -= zDisplacement
+    if ( controls.isLocked === true ) {
 
-        player.position.x -= xDisplacement
-		player.position.z -= zDisplacement
-	}
-	if(keyboard[83]){ // S key
-		let xDisplacement = Math.sin(camera.rotation.y) * playerObject.speed;
-		let zDisplacement = -Math.cos(camera.rotation.y) * playerObject.speed;
+        raycaster.ray.origin.copy( controls.getObject().position );
+        raycaster.ray.origin.y -= 10;
 
-        // camera.position.x += xDisplacement
-		// camera.position.z += zDisplacement
+        const intersections = raycaster.intersectObjects( objects );
 
-        player.position.x += xDisplacement
-		player.position.z += zDisplacement
-	}
-	if(keyboard[65]){ // A key
-		// Redirect motion by 90 degrees
-		let xDisplacement = Math.sin(camera.rotation.y + Math.PI/2) * playerObject.speed;
-		let zDisplacement = -Math.cos(camera.rotation.y + Math.PI/2) * playerObject.speed;
+        const onObject = intersections.length > 0;
 
-        // camera.position.x += xDisplacement
-		// camera.position.z += zDisplacement
+        const delta = ( time - prevTime ) / 1000;
 
-        player.position.x += xDisplacement
-		player.position.z += zDisplacement
-	}
-	if(keyboard[68]){ // D key
-		let xDisplacement = Math.sin(camera.rotation.y - Math.PI/2) * playerObject.speed;
-		let zDisplacement = -Math.cos(camera.rotation.y - Math.PI/2) * playerObject.speed;
+        velocity.x -= velocity.x * 10.0 * delta;
+        velocity.z -= velocity.z * 10.0 * delta;
 
-        // camera.position.x += xDisplacement
-		// camera.position.z += zDisplacement
+        velocity.y -= 9.8 * 100.0 * delta; // 100.0 = mass
 
-        player.position.x += xDisplacement
-		player.position.z += zDisplacement
-	}
+        direction.z = Number( moveForward ) - Number( moveBackward );
+        direction.x = Number( moveRight ) - Number( moveLeft );
+        direction.normalize(); // this ensures consistent movements in all directions
+
+        if ( moveForward || moveBackward ) velocity.z -= direction.z * 400.0 * delta;
+        if ( moveLeft || moveRight ) velocity.x -= direction.x * 400.0 * delta;
+
+        if ( onObject === true ) {
+
+            velocity.y = Math.max( 0, velocity.y );
+            canJump = true;
+
+        }
+
+        controls.moveRight( - velocity.x * delta );
+        controls.moveForward( - velocity.z * delta );
+
+        controls.getObject().position.y += ( velocity.y * delta ); // new behavior
+
+        if ( controls.getObject().position.y < 10 ) {
+
+            velocity.y = 0;
+            controls.getObject().position.y = 10;
+
+            canJump = true;
+
+        }
+
+    }
+
+    prevTime = time;
     renderer.render( scene, camera );
+}
+
+const onKeyDown = function ( event ) {
+
+    switch ( event.code ) {
+
+        case 'ArrowUp':
+        case 'KeyW':
+            moveForward = true;
+            break;
+
+        case 'ArrowLeft':
+        case 'KeyA':
+            moveLeft = true;
+            break;
+
+        case 'ArrowDown':
+        case 'KeyS':
+            moveBackward = true;
+            break;
+
+        case 'ArrowRight':
+        case 'KeyD':
+            moveRight = true;
+            break;
+
+        case 'Space':
+            if ( canJump === true ) velocity.y += playerObject.jumpHeight;
+            canJump = false;
+            break;
+
+    }
+
 };
 
-function keyDown(event){
-	keyboard[event.keyCode] = true;
-}
+const onKeyUp = function ( event ) {
 
-function keyUp(event){
-	keyboard[event.keyCode] = false;
-}
+    switch ( event.code ) {
 
-window.addEventListener('keydown', keyDown);
-window.addEventListener('keyup', keyUp);
+        case 'ArrowUp':
+        case 'KeyW':
+            moveForward = false;
+            break;
+
+        case 'ArrowLeft':
+        case 'KeyA':
+            moveLeft = false;
+            break;
+
+        case 'ArrowDown':
+        case 'KeyS':
+            moveBackward = false;
+            break;
+
+        case 'ArrowRight':
+        case 'KeyD':
+            moveRight = false;
+            break;
+
+    }
+
+};
+
+function onWindowResize() {
+
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+
+    renderer.setSize( window.innerWidth, window.innerHeight );
+
+}
 
 init();
 animate();
